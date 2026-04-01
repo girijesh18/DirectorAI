@@ -13,6 +13,7 @@ function App() {
   // Video & Engine State
   const [videoFile, setVideoFile] = useState(null);
   const [videoUrl, setVideoUrl] = useState(null);
+  const [undoHistory, setUndoHistory] = useState([]);
   const [videoDuration, setVideoDuration] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [ffmpegLoaded, setFfmpegLoaded] = useState(false);
@@ -57,6 +58,7 @@ function App() {
       setVideoFile(file);
       const url = URL.createObjectURL(file);
       setVideoUrl(url);
+      setUndoHistory([]);
       
       // We will grab duration once the video loads its metadata
       
@@ -78,7 +80,7 @@ function App() {
     
     // 1. Write file to ffmpeg memory
     const inputFileName = 'input.mp4';
-    await ffmpeg.writeFile(inputFileName, await fetchFile(videoFile));
+    await ffmpeg.writeFile(inputFileName, await fetchFile(videoUrl));
 
     // 2. We only handle the first command for MVP demo
     const task = commands[0];
@@ -107,6 +109,24 @@ function App() {
              '-c:a', 'copy',
              outputName
            ]);
+        } else if (task.action === 'mute') {
+           await ffmpeg.exec(['-i', inputFileName, '-an', '-c:v', 'copy', outputName]);
+        } else if (task.action === 'filter') {
+           const args = ['-i', inputFileName];
+           if (task.video_filter) {
+             args.push('-vf', task.video_filter);
+             args.push('-c:v', 'libx264', '-preset', 'ultrafast');
+           } else {
+             args.push('-c:v', 'copy');
+           }
+           if (task.audio_filter) {
+             args.push('-af', task.audio_filter);
+             args.push('-c:a', 'aac');
+           } else {
+             args.push('-c:a', 'copy');
+           }
+           args.push(outputName);
+           await ffmpeg.exec(args);
         } else {
            // Fallback copy
            await ffmpeg.exec(['-i', inputFileName, '-c', 'copy', outputName]);
@@ -116,6 +136,8 @@ function App() {
         const data = await ffmpeg.readFile(outputName);
         const url = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
         
+        // Save current url to history before overwriting
+        setUndoHistory(prev => [...prev, videoUrl]);
         setVideoUrl(url);
         
         setMessages(prev => [...prev, 
@@ -131,12 +153,28 @@ function App() {
     setIsProcessing(false);
   };
 
+  const handleUndo = () => {
+    if (undoHistory.length > 0) {
+      const prevUrl = undoHistory[undoHistory.length - 1];
+      setUndoHistory(prev => prev.slice(0, -1));
+      setVideoUrl(prevUrl);
+      setMessages(prev => [...prev, { role: 'system-action', text: '[System] Reverted to the previous version.' }]);
+    } else {
+      setMessages(prev => [...prev, { role: 'ai', text: 'There is nothing to undo.' }]);
+    }
+  };
+
   const handleSend = async () => {
     if (!inputText.trim()) return;
     
     const newMsgs = [...messages, { role: 'user', text: inputText }];
     setMessages(newMsgs);
     setInputText('');
+
+    if (inputText.toLowerCase().trim() === 'undo') {
+       handleUndo();
+       return;
+    }
 
     if (!videoFile) {
       setTimeout(() => {
@@ -170,6 +208,11 @@ function App() {
           Antigravity Chat Editor
         </div>
         <div className="header-actions" style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          {undoHistory.length > 0 && (
+            <button onClick={handleUndo} style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.1)', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '12px' }}>
+              ↶ Undo
+            </button>
+          )}
           {!ffmpegLoaded && <span style={{ fontSize: '11px', color: 'var(--accent-danger)' }}>Loading Engine...</span>}
           {ffmpegLoaded && <span style={{ fontSize: '11px', color: 'var(--accent-secondary)' }}>WASM Engine Ready</span>}
           <a  
@@ -184,6 +227,76 @@ function App() {
       </header>
 
       <main className="main-content">
+        <aside className="sidebar">
+          <div className="sidebar-header">Capabilities</div>
+          <ul className="feature-list">
+            <li>
+              <strong>✨ Make it pop</strong>
+              <span>Boosts colors and brightness</span>
+            </li>
+            <li>
+              <strong>🎞️ Make it vintage</strong>
+              <span>Applies a black & white filter</span>
+            </li>
+            <li>
+              <strong>⚡ Make it 2x speed</strong>
+              <span>Speeds up video & audio</span>
+            </li>
+            <li>
+              <strong>🐢 Slow motion</strong>
+              <span>Halves speed to 0.5x</span>
+            </li>
+            <li>
+              <strong>⏪ Reverse video</strong>
+              <span>Plays it completely backwards</span>
+            </li>
+            <li>
+              <strong>🌫️ Blur video</strong>
+              <span>Applies a heavy cinematic blur</span>
+            </li>
+            <li>
+              <strong>🔍 Sharpen detail</strong>
+              <span>Crisps up blurry footage</span>
+            </li>
+            <li>
+              <strong>🪞 Mirror video</strong>
+              <span>Flips video horizontally</span>
+            </li>
+            <li>
+              <strong>🙃 Upside down</strong>
+              <span>Flips video vertically</span>
+            </li>
+            <li>
+              <strong>🔊 Volume boost</strong>
+              <span>Increases master volume by 200%</span>
+            </li>
+            <li>
+              <strong>🌤️ Fade in</strong>
+              <span>Smooth 2s transition from black</span>
+            </li>
+            <li>
+              <strong>🔇 Mute it</strong>
+              <span>Removes all audio tracks</span>
+            </li>
+            <li>
+              <strong>✂️ Crop edges</strong>
+              <span>Trims video from all sides</span>
+            </li>
+            <li>
+              <strong>🔲 Blur region</strong>
+              <span>Applies static spatial center blur</span>
+            </li>
+            <li>
+              <strong>📱 Vertical crop</strong>
+              <span>Re-frames to 9:16 aspect ratio</span>
+            </li>
+            <li>
+              <strong>✂️ Trim video</strong>
+              <span>e.g., "Keep the first 5 seconds"</span>
+            </li>
+          </ul>
+        </aside>
+
         <section className="workspace">
           <div className="canvas-area">
             <div className={`mock-video-player ${isProcessing ? 'processing' : ''}`} style={videoUrl ? { backgroundColor: 'transparent', border: 'none', boxShadow: 'none' } : {}}>
