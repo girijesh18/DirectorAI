@@ -63,6 +63,11 @@ export const parseEditorCommand = async (userInput, duration) => {
           { action: "filter", video_filter: "reverse", audio_filter: "areverse" }
         ];
         message = "Reversed the timeline! The video now plays backward.";
+      } else if (input.includes("blur") && input.includes("face")) {
+        commands = [
+          { action: "ai_track", target: "face" }
+        ];
+        message = "Initialized Deep Brain AI! Automatically tracking and blurring faces dynamically.";
       } else if (input.includes("blur") && (input.includes("center") || input.includes("section") || input.includes("region") || input.includes("part"))) {
         commands = [
           { action: "filter", video_filter: "split[main][tmp];[tmp]crop=iw/2:ih/2:iw/4:ih/4,boxblur=15[blur];[main][blur]overlay=W/4:H/4" }
