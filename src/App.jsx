@@ -2,6 +2,9 @@ import React, { useState, useRef, useEffect } from 'react';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { parseEditorCommand } from './services/llmMock';
+import * as tf from '@tensorflow/tfjs';
+import '@tensorflow/tfjs-backend-webgl';
+import * as blazeface from '@tensorflow-models/blazeface';
 import './App.css';
 
 function App() {
@@ -153,6 +156,118 @@ function App() {
     setIsProcessing(false);
   };
 
+  const runAIFaceTracking = async (sourceUrl) => {
+    setIsProcessing(true);
+    setMessages(prev => [...prev, { role: 'system-action', text: '[TFJS] Booting Deep Brain... Loading BlazeFace model...' }]);
+
+    try {
+      await tf.ready();
+      const model = await blazeface.load();
+
+      setMessages(prev => [...prev, { role: 'system-action', text: '[TFJS] Model loaded. Tracking frames dynamically...' }]);
+
+      const video = document.createElement('video');
+      video.src = sourceUrl;
+      video.crossOrigin = "anonymous";
+      video.muted = true;
+      video.playsInline = true;
+
+      await new Promise(resolve => {
+        video.onloadedmetadata = () => resolve();
+      });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+
+      const stream = canvas.captureStream(30);
+      
+      let finalStream = stream;
+      const videoStream = video.captureStream ? video.captureStream() : (video.mozCaptureStream ? video.mozCaptureStream() : null);
+      if (videoStream && videoStream.getAudioTracks().length > 0) {
+        finalStream = new MediaStream([
+          ...stream.getVideoTracks(),
+          ...videoStream.getAudioTracks()
+        ]);
+      }
+
+      const recorder = new MediaRecorder(finalStream, { mimeType: 'video/webm' });
+      const chunks = [];
+      recorder.ondataavailable = e => chunks.push(e.data);
+      
+      return new Promise((resolve, reject) => {
+        recorder.onstop = () => {
+          const blob = new Blob(chunks, { type: 'video/webm' });
+          const newUrl = URL.createObjectURL(blob);
+          
+          setUndoHistory(prev => [...prev, videoUrl]);
+          setVideoUrl(newUrl);
+          
+          setMessages(prev => [...prev, 
+              { role: 'system-action', text: '[TFJS] AI Tracking complete. Rendered via MediaRecorder.' },
+              { role: 'ai', text: 'Face tracking complete! I have dynamically scrubbed out the faces.' }
+          ]);
+          setIsProcessing(false);
+          resolve();
+        };
+
+        const processFrame = async () => {
+          if (video.paused || video.ended) return;
+
+          // 1. Draw base frame
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+          // 2. Predict faces
+          const predictions = await model.estimateFaces(video, false);
+
+          if (predictions.length > 0) {
+            for (let i = 0; i < predictions.length; i++) {
+              const start = predictions[i].topLeft;
+              const end = predictions[i].bottomRight;
+              const size = [end[0] - start[0], end[1] - start[1]];
+              
+              const padX = size[0] * 0.2;
+              const padY = size[1] * 0.2;
+              
+              const x = start[0] - padX;
+              const y = start[1] - padY;
+              const w = size[0] + (padX * 2);
+              const h = size[1] + (padY * 2);
+
+              // 3. Draw dynamic blur precisely over tracking box
+              ctx.save();
+              ctx.filter = 'blur(15px)';
+              ctx.drawImage(video, x, y, w, h, x, y, w, h);
+              ctx.restore();
+            }
+          }
+
+          requestAnimationFrame(processFrame);
+        };
+
+        video.onplay = () => {
+          recorder.start();
+          processFrame();
+        };
+
+        video.onended = () => {
+          recorder.stop();
+        };
+
+        video.play().catch(err => {
+            console.error(err);
+            reject(err);
+        });
+      });
+
+    } catch (err) {
+      console.error(err);
+      setMessages(prev => [...prev, { role: 'system-action', text: '[TFJS] Tracking engine failed. Check console.' }]);
+      setIsProcessing(false);
+    }
+  };
+
   const handleUndo = () => {
     if (undoHistory.length > 0) {
       const prevUrl = undoHistory[undoHistory.length - 1];
@@ -194,9 +309,13 @@ function App() {
       { role: 'system-action', text: `JSON Strategy:\n${JSON.stringify(response.payload, null, 2)}` }
     ]);
 
-    // 3. Hand off JSON array to FFmpeg engine
+    // 3. Hand off JSON array to correct engine
     if (response.payload && response.payload.length > 0) {
-        await processVideoWithFFmpeg(response.payload);
+        if (response.payload[0].action === 'ai_track') {
+           await runAIFaceTracking(videoUrl);
+        } else {
+           await processVideoWithFFmpeg(response.payload);
+        }
     }
   };
 
@@ -205,7 +324,7 @@ function App() {
       <header className="header" style={{ position: 'relative', zIndex: 10 }}>
         <div className="logo">
           <div className="logo-icon">▲</div>
-          Antigravity Chat Editor
+          Director AI
         </div>
         <div className="header-actions" style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
           {undoHistory.length > 0 && (
@@ -230,6 +349,10 @@ function App() {
         <aside className="sidebar">
           <div className="sidebar-header">Capabilities</div>
           <ul className="feature-list">
+            <li>
+              <strong>🤖 AI Face Blur</strong>
+              <span style={{color: 'var(--accent-primary)'}}>Dynamically tracks faces</span>
+            </li>
             <li>
               <strong>✨ Make it pop</strong>
               <span>Boosts colors and brightness</span>
